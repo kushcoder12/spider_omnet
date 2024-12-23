@@ -1,0 +1,13 @@
+*.aux
+*.bbl
+*.log
+*.blg
+*.out
+spiderNet
+*.vec
+*.sca
+*.vci
+*.pyc
+out
+*_m.cc
+*_m.h

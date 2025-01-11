@@ -76,7 +76,7 @@ cp hostNodePropFairPriceScheme.ned ${PATH_NAME}
 
 
 arraylength=${#prefix[@]}
-PYTHON="python"
+PYTHON="python3"
 mkdir -p ${PATH_NAME}
 
 if [ -z "$pathChoice" ]; then
@@ -194,7 +194,7 @@ do
               inifile=${PATH_NAME}${prefix[i]}_${balance}_circ_${routing_scheme}_demand${scale}_${pathChoice}.ini
 
               # create the ini file with specified parameters
-              python scripts/create_ini_file.py \
+              $PYTHON scripts/create_ini_file.py \
                       --network-name ${network}\
                       --topo-filename ${topofile}\
                       --workload-filename ${workload}_workload.txt\
@@ -235,7 +235,7 @@ do
 
                 echo "Creating ini file"
                 # create the ini file with specified parameters
-                python scripts/create_ini_file.py \
+                $PYTHON scripts/create_ini_file.py \
                         --network-name ${network}\
                         --topo-filename ${topofile}\
                         --workload-filename ${workload}_workload.txt\
@@ -304,7 +304,7 @@ do
                 sca_file_path=${vec_file_prefix}${routing_scheme}_demand${scale}_${pathChoice}-#0.sca
 
 
-                python scripts/generate_analysis_plots_for_single_run.py \
+                $PYTHON scripts/generate_analysis_plots_for_single_run.py \
                   --detail $signalsEnabled \
                   --vec_file ${vec_file_path} \
                   --sca_file ${sca_file_path} \
@@ -323,7 +323,7 @@ do
                     sca_file_path=${vec_file_prefix}${routing_scheme}_demand${scale}_${pathChoice}_${numPathChoices}_${schedulingAlgorithm}-#0.sca
 
 
-                    python scripts/generate_analysis_plots_for_single_run.py \
+                    $PYTHON scripts/generate_analysis_plots_for_single_run.py \
                       --detail $signalsEnabled \
                       --vec_file ${vec_file_path} \
                       --sca_file ${sca_file_path} \

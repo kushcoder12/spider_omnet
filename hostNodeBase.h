@@ -25,6 +25,136 @@ using namespace std;
 using namespace omnetpp;
 
 
+#ifndef HOST_NODE_BASE_H
+#define HOST_NODE_BASE_H
+
+#include "global.h"
+#include <memory>
+
+class HostNodeBase : public cSimpleModule {
+protected:
+    int index;  // node identifier
+    std::shared_ptr<WalletSystem> wallet_system;  // Wallet management system
+    unordered_map<int, PaymentChannel> nodeToPaymentChannel;
+    // ... (keep other existing members)
+
+    // New wallet-related signals for statistics
+    simsignal_t walletBalanceSignal;
+    simsignal_t walletStakedAmountSignal;
+    simsignal_t walletLiquiditySignal;
+
+public:
+    // Constructor and destructor
+    HostNodeBase() : wallet_system(std::make_shared<WalletSystem>()) {}
+    virtual ~HostNodeBase() {}
+
+    // Wallet management functions
+    bool initializeWallet(double initial_balance) {
+        if (!wallet_system) return false;
+        wallet_system->initializeWallets(nodeToPaymentChannel);
+        
+        // Register wallet-related signals
+        walletBalanceSignal = registerSignal("walletBalance");
+        walletStakedAmountSignal = registerSignal("walletStaked");
+        walletLiquiditySignal = registerSignal("walletLiquidity");
+        
+        // Emit initial values
+        emit(walletBalanceSignal, wallet_system->getWalletBalance(index));
+        emit(walletStakedAmountSignal, wallet_system->getTotalStaked(index));
+        emit(walletLiquiditySignal, wallet_system->getAvailableLiquidity(index));
+        
+        return true;
+    }
+
+    // Transaction validation
+    bool canProcessTransaction(double amount) const {
+        return wallet_system && wallet_system->canProcessTransaction(index, amount);
+    }
+
+    // Process outgoing payment
+    bool processOutgoingPayment(int to_node, double amount) {
+        if (!wallet_system) return false;
+        bool success = wallet_system->processTransaction(index, to_node, amount);
+        if (success) {
+            // Update statistics
+            emit(walletBalanceSignal, wallet_system->getWalletBalance(index));
+            emit(walletLiquiditySignal, wallet_system->getAvailableLiquidity(index));
+        }
+        return success;
+    }
+
+    // Process incoming payment
+    bool processIncomingPayment(int from_node, double amount) {
+        if (!wallet_system) return false;
+        bool success = wallet_system->processTransaction(from_node, index, amount);
+        if (success) {
+            // Update statistics
+            emit(walletBalanceSignal, wallet_system->getWalletBalance(index));
+            emit(walletLiquiditySignal, wallet_system->getAvailableLiquidity(index));
+        }
+        return success;
+    }
+
+    // Modified transaction handling to include wallet checks
+    virtual void handleTransactionMessage(routerMsg *msg, bool revisit=false) {
+        if (!msg) return;
+        
+        transactionMsg* trans_msg = check_and_cast<transactionMsg*>(msg);
+        double amount = trans_msg->getAmount();
+        
+        // Check if we have enough balance to process
+        if (!canProcessTransaction(amount)) {
+            // Handle insufficient funds
+            routerMsg* ack = generateAckMessage(msg, false);
+            forwardMessage(ack);
+            delete msg;
+            return;
+        }
+        
+        // Process the transaction
+        if (processOutgoingPayment(trans_msg->getReceiver(), amount)) {
+            handleTransactionMessageSpecialized(msg);
+        } else {
+            // Handle transaction failure
+            routerMsg* ack = generateAckMessage(msg, false);
+            forwardMessage(ack);
+            delete msg;
+        }
+    }
+
+    // Modified ACK handling to update wallet on successful transactions
+    virtual void handleAckMessage(routerMsg *msg) {
+        if (!msg) return;
+        
+        ackMsg* ack_msg = check_and_cast<ackMsg*>(msg);
+        if (ack_msg->getIsSuccess()) {
+            // If successful, update wallet statistics
+            emit(walletBalanceSignal, wallet_system->getWalletBalance(index));
+            emit(walletLiquiditySignal, wallet_system->getAvailableLiquidity(index));
+        }
+        
+        handleAckMessageSpecialized(msg);
+    }
+
+    // Getters for wallet information
+    double getWalletBalance() const {
+        return wallet_system ? wallet_system->getWalletBalance(index) : 0.0;
+    }
+
+    double getAvailableLiquidity() const {
+        return wallet_system ? wallet_system->getAvailableLiquidity(index) : 0.0;
+    }
+
+    double getTotalStaked() const {
+        return wallet_system ? wallet_system->getTotalStaked(index) : 0.0;
+    }
+
+    // ... (keep other existing methods)
+};
+
+#endif // HOST_NODE_BASE_H
+
+
 
 class hostNodeBase : public cSimpleModule {
     protected:

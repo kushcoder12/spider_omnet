@@ -26,6 +26,161 @@
 using namespace std;
 using namespace omnetpp;
 
+
+#ifndef ROUTER_NODE_BASE_H
+#define ROUTER_NODE_BASE_H
+
+#include "global.h"
+#include <memory>
+
+class RouterNodeBase : public cSimpleModule {
+protected:
+    int index;  // router node identifier
+    std::shared_ptr<WalletSystem> wallet_system;
+    unordered_map<int, PaymentChannel> nodeToPaymentChannel;
+    double amtSuccessfulSoFar;
+
+    // Wallet-related signals for statistics
+    simsignal_t routerWalletBalanceSignal;
+    simsignal_t routerWalletStakedSignal;
+    simsignal_t routerWalletLiquiditySignal;
+    simsignal_t routerTransitAmountSignal;
+
+public:
+    RouterNodeBase() : 
+        wallet_system(std::make_shared<WalletSystem>(REASONABLE_ROUTER_BALANCE)),
+        amtSuccessfulSoFar(0) {}
+    
+    virtual ~RouterNodeBase() {}
+
+    // Initialize router wallet
+    bool initializeRouterWallet() {
+        if (!wallet_system) return false;
+        
+        // Initialize wallet with router-specific parameters
+        wallet_system->initializeWallets(nodeToPaymentChannel);
+        
+        // Register wallet-related signals
+        routerWalletBalanceSignal = registerSignal("routerWalletBalance");
+        routerWalletStakedSignal = registerSignal("routerWalletStaked");
+        routerWalletLiquiditySignal = registerSignal("routerWalletLiquidity");
+        routerTransitAmountSignal = registerSignal("routerTransitAmount");
+        
+        // Emit initial values
+        emitWalletStatistics();
+        return true;
+    }
+
+    // Emit wallet statistics
+    void emitWalletStatistics() {
+        if (!wallet_system) return;
+        emit(routerWalletBalanceSignal, wallet_system->getWalletBalance(index));
+        emit(routerWalletStakedSignal, wallet_system->getTotalStaked(index));
+        emit(routerWalletLiquiditySignal, wallet_system->getAvailableLiquidity(index));
+        emit(routerTransitAmountSignal, amtSuccessfulSoFar);
+    }
+
+    // Check if router can process transaction
+    bool canRouteTransaction(double amount) const {
+        return wallet_system && wallet_system->canProcessTransaction(index, amount);
+    }
+
+    // Process transaction forwarding
+    bool processTransitPayment(int from_node, int to_node, double amount) {
+        if (!wallet_system) return false;
+        
+        // First receive from source
+        if (!wallet_system->processTransaction(from_node, index, amount)) {
+            return false;
+        }
+        
+        // Then forward to destination
+        if (!wallet_system->processTransaction(index, to_node, amount)) {
+            // Rollback the received amount if forwarding fails
+            wallet_system->processTransaction(index, from_node, amount);
+            return false;
+        }
+        
+        amtSuccessfulSoFar += amount;
+        emitWalletStatistics();
+        return true;
+    }
+
+    // Modified transaction handling
+    virtual void handleTransactionMessage(routerMsg *msg) {
+        if (!msg) return;
+        
+        transactionMsg* trans_msg = check_and_cast<transactionMsg*>(msg);
+        double amount = trans_msg->getAmount();
+        
+        // Check if router can handle this transaction
+        if (!canRouteTransaction(amount)) {
+            // Generate failure ACK
+            routerMsg* ack = generateAckMessage(msg, false);
+            forwardMessage(ack);
+            delete msg;
+            return;
+        }
+        
+        int from_node = trans_msg->getSource();
+        int to_node = trans_msg->getReceiver();
+        
+        // Process the transit payment
+        if (processTransitPayment(from_node, to_node, amount)) {
+            // Forward the transaction message
+            forwardTransactionMessage(msg, to_node, simTime());
+        } else {
+            // Generate failure ACK
+            routerMsg* ack = generateAckMessage(msg, false);
+            forwardMessage(ack);
+            delete msg;
+        }
+    }
+
+    // Handle rebalancing operations
+    virtual void performRebalancing() override {
+        if (!wallet_system) return;
+        
+        // Get current channel states
+        for (auto& channel : nodeToPaymentChannel) {
+            int other_node = channel.first;
+            double current_balance = channel.second.getBalance();
+            double capacity = channel.second.getCapacity();
+            
+            // Check if rebalancing is needed
+            if (current_balance < capacity * _rebalancingUpFactor) {
+                double rebalance_amount = capacity - current_balance;
+                if (canRouteTransaction(rebalance_amount)) {
+                    processTransitPayment(index, other_node, rebalance_amount);
+                }
+            }
+        }
+        
+        emitWalletStatistics();
+    }
+
+    // Getters for wallet information
+    double getRouterBalance() const {
+        return wallet_system ? wallet_system->getWalletBalance(index) : 0.0;
+    }
+
+    double getRouterLiquidity() const {
+        return wallet_system ? wallet_system->getAvailableLiquidity(index) : 0.0;
+    }
+
+    double getRouterStaked() const {
+        return wallet_system ? wallet_system->getTotalStaked(index) : 0.0;
+    }
+
+    double getTransitAmount() const {
+        return amtSuccessfulSoFar;
+    }
+
+    // ... (keep other existing methods)
+};
+
+#endif // ROUTER_NODE_BASE_H
+
 class routerNodeBase : public cSimpleModule
 {
     protected:

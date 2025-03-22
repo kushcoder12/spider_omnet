@@ -45,6 +45,167 @@ struct LaterTransUnit
   }
 };
 
+#ifndef GLOBAL_H
+#define GLOBAL_H
+
+#include <unordered_map>
+#include <set>
+#include <utility>
+#include <tuple>
+
+// Forward declarations of existing structures if needed
+class PaymentChannel;
+
+// Channel information structure
+class ChannelInfo {
+public:
+    double staked_amount;
+    double available_balance;
+
+    ChannelInfo(double staked) : staked_amount(staked), available_balance(staked) {}
+};
+
+// Custom hash function for channel key pairs
+struct ChannelKeyHash {
+    template <class T1, class T2>
+    std::size_t operator() (const std::pair<T1, T2>& pair) const {
+        return std::hash<T1>()(pair.first) ^ std::hash<T2>()(pair.second);
+    }
+};
+
+class WalletSystem {
+private:
+    double initial_balance;
+    std::unordered_map<int, double> wallet_balances;
+    std::unordered_map<std::pair<int, int>, ChannelInfo, ChannelKeyHash> channel_info;
+    std::unordered_map<int, std::set<std::pair<int, int>>> node_channels;
+    std::unordered_map<int, double> total_staked;
+
+    // Helper function to get consistent channel key
+    std::pair<int, int> getChannelKey(int node1, int node2) {
+        return std::make_pair(std::min(node1, node2), std::max(node1, node2));
+    }
+
+public:
+    WalletSystem(double initialBalance = 10000) : initial_balance(initialBalance) {}
+
+    // Initialize wallets based on network topology
+    void initializeWallets(const std::unordered_map<int, std::vector<std::pair<int, int>>>& network) {
+        wallet_balances.clear();
+        channel_info.clear();
+        node_channels.clear();
+        total_staked.clear();
+
+        // First pass: Initialize basic structures
+        for (const auto& node_entry : network) {
+            int node = node_entry.first;
+            wallet_balances[node] = initial_balance;
+            total_staked[node] = 0;
+        }
+
+        // Second pass: Process channels and stakes
+        for (const auto& node_entry : network) {
+            int node1 = node_entry.first;
+            for (const auto& edge : node_entry.second) {
+                int node2 = edge.first;
+                double staked = edge.second; // Assuming second value is stake amount
+
+                auto channel_key = getChannelKey(node1, node2);
+                channel_info.emplace(channel_key, ChannelInfo(staked));
+                node_channels[node1].insert(channel_key);
+                node_channels[node2].insert(channel_key);
+
+                // Update total staked amounts
+                total_staked[node1] += staked;
+                total_staked[node2] += staked;
+            }
+        }
+
+        // Third pass: Ensure sufficient wallet balances
+        for (auto& balance : wallet_balances) {
+            int node = balance.first;
+            if (total_staked[node] > balance.second) {
+                balance.second = total_staked[node];
+            }
+        }
+    }
+
+    // Check if transaction is possible
+    bool canProcessTransaction(int from_node, double amount) const {
+        auto it = wallet_balances.find(from_node);
+        if (it == wallet_balances.end()) return false;
+        return amount <= it->second;
+    }
+
+    // Process a transaction between nodes
+    bool processTransaction(int from_node, int to_node, double amount) {
+        if (amount <= 0) return false;
+
+        // Handle credit operation
+        if (from_node == -1 && to_node != -1) {
+            auto it = wallet_balances.find(to_node);
+            if (it == wallet_balances.end()) return false;
+            it->second += amount;
+            return true;
+        }
+
+        // Handle debit operation
+        if (to_node == -1 && from_node != -1) {
+            if (!canProcessTransaction(from_node, amount)) return false;
+            wallet_balances[from_node] -= amount;
+            return true;
+        }
+
+        // Handle transfer between nodes
+        if (!canProcessTransaction(from_node, amount)) return false;
+        wallet_balances[from_node] -= amount;
+        wallet_balances[to_node] += amount;
+        return true;
+    }
+
+    // Get wallet balance
+    double getWalletBalance(int node) const {
+        auto it = wallet_balances.find(node);
+        return it != wallet_balances.end() ? it->second : 0.0;
+    }
+
+    // Get available liquidity
+    double getAvailableLiquidity(int node) const {
+        auto balance_it = wallet_balances.find(node);
+        auto staked_it = total_staked.find(node);
+        if (balance_it == wallet_balances.end()) return 0.0;
+        if (staked_it == total_staked.end()) return balance_it->second;
+        return balance_it->second - staked_it->second;
+    }
+
+    // Get total staked amount
+    double getTotalStaked(int node) const {
+        auto it = total_staked.find(node);
+        return it != total_staked.end() ? it->second : 0.0;
+    }
+};
+
+// Global wallet system instance
+extern WalletSystem* globalWalletSystem;
+
+// Convenience functions
+inline void initializeWallets(const std::unordered_map<int, std::vector<std::pair<int, int>>>& network) {
+    if (globalWalletSystem) globalWalletSystem->initializeWallets(network);
+}
+
+inline bool creditWallet(int node, double amount) {
+    return globalWalletSystem ? globalWalletSystem->processTransaction(-1, node, amount) : false;
+}
+
+inline bool debitWallet(int node, double amount) {
+    return globalWalletSystem ? globalWalletSystem->processTransaction(node, -1, amount) : false;
+}
+
+inline double getWalletBalance(int node) {
+    return globalWalletSystem ? globalWalletSystem->getWalletBalance(node) : 0.0;
+}
+
+#endif // GLOBAL_H
 
 //global parameters
 extern unordered_map<int, priority_queue<TransUnit, vector<TransUnit>, LaterTransUnit>> _transUnitList;
